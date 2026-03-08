@@ -1,0 +1,44 @@
+{
+  "telegram": {
+    "bot_token": "<TELEGRAM_BOT_TOKEN>",
+    "chat_id": -1001234567890,
+    "message_thread_id": 3
+  },
+  "sources": {
+    "rssai_base_url": "https://your-rss-ai-service.example.com"
+  },
+  "tts": {
+    "base_url": "http://127.0.0.1:5000",
+    "speaker": "",
+    "chunk_chars": 3500
+  },
+  "location": {
+    "name": "北京市东城区",
+    "latitude": 39.9042,
+    "longitude": 116.4074,
+    "timezone": "Asia/Shanghai"
+  },
+  "weather": {
+    "parallel_workers": 6,
+    "models": [
+      "ecmwf_ifs025",
+      "ecmwf_aifs025_single",
+      "gfs_seamless",
+      "gfs_graphcast025",
+      "icon_seamless",
+      "gem_seamless",
+      "jma_seamless",
+      "ukmo_seamless",
+      "kma_seamless",
+      "bom_access_global"
+    ]
+  },
+  "limits": {
+    "max_chars": 20000
+  },
+  "assistant": {
+    "agent_id": "morning",
+    "user_name": "<USER_NAME>",
+    "workspace_dir": "<OPTIONAL_OPENCLAW_WORKSPACE>"
+  }
+}
