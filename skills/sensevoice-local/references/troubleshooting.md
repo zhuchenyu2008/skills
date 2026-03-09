@@ -15,6 +15,9 @@ Expected runtime path is `/root/.openclaw/workspace/sensevoice-local`.
 ### Model files missing
 Run the wrapper once; it auto-downloads the pre-exported model through `scripts/prepare_model.sh`.
 
+### Long transcription dies in OpenClaw with `SIGKILL` / task ends before completion
+If a large audio transcription is launched via an exec-managed background session, the job may be reclaimed or killed before finishing. Re-run it as a detached background job with explicit pid/log/state files, and monitor that state instead of trusting the exec session lifetime.
+
 ### Host under memory pressure
 This workflow is intentionally capped to `2 CPU / 3GiB RAM / 256 PIDs`. If the server is under pressure, keep those limits or tighten them further via environment variables before running the wrapper.
 
