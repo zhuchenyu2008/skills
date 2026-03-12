@@ -18,12 +18,15 @@ import concurrent.futures
 import json
 import math
 import os
+import random
 import statistics
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter
 from datetime import datetime, timedelta
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -83,8 +86,37 @@ def sh(args, *, timeout=180, check=True, capture=True, text=True):
     return p.stdout if text else p.stdout
 
 
-def http_json(url, *, timeout=30, method='GET', headers=None, data=None):
-    h = {'User-Agent': 'openclaw-morning-brief/2.0'}
+TRANSIENT_HTTP_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+TRANSIENT_ERROR_SNIPPETS = (
+    'timed out',
+    'timeout',
+    'too many requests',
+    'temporarily unavailable',
+    'connection reset',
+    'connection aborted',
+    'unexpected eof',
+    'handshake',
+    'gateway time-out',
+    'gateway timeout',
+)
+
+
+def _is_transient_error(exc):
+    if isinstance(exc, HTTPError):
+        return exc.code in TRANSIENT_HTTP_STATUSES
+    if isinstance(exc, URLError):
+        msg = str(exc.reason or exc).lower()
+        return any(snippet in msg for snippet in TRANSIENT_ERROR_SNIPPETS)
+    msg = str(exc).lower()
+    return any(snippet in msg for snippet in TRANSIENT_ERROR_SNIPPETS)
+
+
+def http_json(url, *, timeout=30, method='GET', headers=None, data=None, retries=0, backoff=1.2):
+    h = {
+        'User-Agent': 'openclaw-morning-brief/2.1',
+        'Accept': 'application/json',
+        'Connection': 'close',
+    }
     if headers:
         h.update(headers)
     if data is not None:
@@ -93,9 +125,20 @@ def http_json(url, *, timeout=30, method='GET', headers=None, data=None):
             h['Content-Type'] = 'application/json'
         elif isinstance(data, str):
             data = data.encode('utf-8')
-    req = Request(url, method=method, headers=h, data=data)
-    with urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode('utf-8'))
+    attempts = max(1, int(retries) + 1)
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            req = Request(url, method=method, headers=h, data=data)
+            with urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode('utf-8'))
+        except Exception as e:
+            last_exc = e
+            if attempt >= attempts or not _is_transient_error(e):
+                raise
+            sleep_s = backoff * (2 ** (attempt - 1)) + random.uniform(0, 0.35)
+            time.sleep(sleep_s)
+    raise last_exc
 
 
 def now_in_tz(tz_name: str):
@@ -182,7 +225,8 @@ def hour_slot_label(hour):
     return "夜间"
 
 
-def fetch_openmeteo_model_forecast(latitude, longitude, timezone, model, forecast_days=2):
+def fetch_openmeteo_model_forecast(latitude, longitude, timezone, model, forecast_days=2,
+                                  *, retries=2, backoff=1.2):
     params = {
         'latitude': str(latitude),
         'longitude': str(longitude),
@@ -207,7 +251,7 @@ def fetch_openmeteo_model_forecast(latitude, longitude, timezone, model, forecas
         ]),
     }
     url = 'https://api.open-meteo.com/v1/forecast?' + urlencode(params)
-    return http_json(url, timeout=40)
+    return http_json(url, timeout=40, retries=retries, backoff=backoff)
 
 
 def find_day_index(times, target_date):
@@ -361,14 +405,20 @@ def fetch_weather_consensus(location_cfg, weather_cfg):
     target_now = now_in_tz(timezone)
     target_date = target_now.strftime('%Y-%m-%d')
     models = weather_cfg.get('models') or DEFAULT_MODELS
-    workers = max(1, min(int(weather_cfg.get('parallel_workers', 6)), len(models)))
+    workers = max(1, min(int(weather_cfg.get('parallel_workers', 3)), len(models)))
+    request_retries = max(0, int(weather_cfg.get('request_retries', 2)))
+    request_backoff = float(weather_cfg.get('request_backoff_seconds', 1.2))
+    retry_failed_serially = bool(weather_cfg.get('retry_failed_serially', True))
 
     results = []
     errors = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {
-            ex.submit(fetch_openmeteo_model_forecast,
-                      location_cfg['latitude'], location_cfg['longitude'], timezone, model, 2): model
+            ex.submit(
+                fetch_openmeteo_model_forecast,
+                location_cfg['latitude'], location_cfg['longitude'], timezone, model, 2,
+                retries=request_retries, backoff=request_backoff,
+            ): model
             for model in models
         }
         for fut in concurrent.futures.as_completed(futs):
@@ -376,6 +426,18 @@ def fetch_weather_consensus(location_cfg, weather_cfg):
             try:
                 payload = fut.result()
                 results.append(normalize_model_forecast(model, payload, target_date))
+            except Exception as e:
+                errors[model] = str(e)
+
+    if errors and retry_failed_serially:
+        for model in list(errors.keys()):
+            try:
+                payload = fetch_openmeteo_model_forecast(
+                    location_cfg['latitude'], location_cfg['longitude'], timezone, model, 2,
+                    retries=request_retries, backoff=request_backoff,
+                )
+                results.append(normalize_model_forecast(model, payload, target_date))
+                del errors[model]
             except Exception as e:
                 errors[model] = str(e)
 
@@ -460,9 +522,20 @@ def compact_json(obj):
     return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))
 
 
+def clamp_text(text, max_chars):
+    s = (text or '').strip()
+    if not max_chars or len(s) <= max_chars:
+        return s, False
+    clipped = s[:max_chars].rstrip()
+    cut = clipped.rfind('\n\n')
+    if cut >= max_chars * 0.6:
+        clipped = clipped[:cut].rstrip()
+    return clipped, True
+
+
 def fetch_rssai_daily(rssai_base_url: str):
     url = f"{rssai_base_url.rstrip('/')}/api/reports?limit=1&report_type=daily"
-    j = http_json(url, timeout=30)
+    j = http_json(url, timeout=30, retries=2, backoff=1.0)
     items = j.get('items', [])
     if not items:
         return None
@@ -637,7 +710,15 @@ def build_greeting(cfg):
 
 def draft_brief(weather_consensus, rss_body, cfg):
     assistant_cfg = cfg.get('assistant') or {}
-    weather_json = json.dumps(weather_consensus, ensure_ascii=False, indent=2)
+    limits = cfg.get('limits') or {}
+    weather_json, weather_truncated = clamp_text(
+        json.dumps(weather_consensus, ensure_ascii=False, indent=2),
+        int(limits.get('weather_prompt_max_chars', 12000)),
+    )
+    rss_body_prompt, rss_truncated = clamp_text(
+        rss_body,
+        int(limits.get('rss_prompt_max_chars', 45000)),
+    )
     location_name = ((cfg.get('location') or {}).get('name')) or '目标地区'
     user_name = (assistant_cfg.get('user_name') or '').strip()
     salutation_rule = (
@@ -693,14 +774,21 @@ def main():
     tts = cfg['tts']
     limits = cfg.get('limits', {})
     location = cfg.get('location') or {
-        'name': '宁波市海曙区',
-        'latitude': 29.87819,
-        'longitude': 121.54945,
+        'name': '北京市东城区',
+        'latitude': 39.9042,
+        'longitude': 116.4074,
         'timezone': 'Asia/Shanghai',
     }
     weather_cfg = cfg.get('weather') or {}
 
     weather_consensus = fetch_weather_consensus(location, weather_cfg)
+    print(json.dumps({
+        'date': weather_consensus.get('date'),
+        'ok': weather_consensus.get('source_count_ok'),
+        'target': weather_consensus.get('source_count_target'),
+        'sources_ok': weather_consensus.get('sources_ok'),
+        'sources_failed': weather_consensus.get('sources_failed'),
+    }, ensure_ascii=False), file=sys.stderr, flush=True)
 
     rep = fetch_rssai_daily(src['rssai_base_url'])
     rss_title, rss_body = rep if rep else ('', '')

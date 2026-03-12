@@ -19,7 +19,10 @@
     "timezone": "Asia/Shanghai"
   },
   "weather": {
-    "parallel_workers": 6,
+    "parallel_workers": 3,
+    "request_retries": 2,
+    "request_backoff_seconds": 1.2,
+    "retry_failed_serially": true,
     "models": [
       "ecmwf_ifs025",
       "ecmwf_aifs025_single",
@@ -34,11 +37,15 @@
     ]
   },
   "limits": {
-    "max_chars": 20000
+    "max_chars": 20000,
+    "weather_prompt_max_chars": 12000,
+    "rss_prompt_max_chars": 45000
   },
   "assistant": {
     "agent_id": "morning",
     "user_name": "<USER_NAME>",
-    "workspace_dir": "<OPTIONAL_OPENCLAW_WORKSPACE>"
+    "workspace_dir": "<OPTIONAL_OPENCLAW_WORKSPACE>",
+    "greeting_session_id": "morning-greeting",
+    "brief_session_id": "morning-brief"
   }
 }

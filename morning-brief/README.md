@@ -38,6 +38,9 @@
 - `location`：天气地理位置
 - `assistant.user_name`：如需个性化称呼，可填用户名字；不填也能工作
 - `assistant.workspace_dir`：如果你想让脚本参考 OpenClaw memory 自动生成早安问候，可填写；不填则只生成通用问候
+- `assistant.greeting_session_id` / `assistant.brief_session_id`：可选，自定义两个 OpenClaw agent 会话 ID，方便把“问候”和“口播稿”上下文分开
+- `weather.request_retries` / `weather.request_backoff_seconds` / `weather.retry_failed_serially`：Open-Meteo 抓取抖动时的重试与串行补抓参数
+- `limits.weather_prompt_max_chars` / `limits.rss_prompt_max_chars`：给 agent 的天气 JSON / 日报原文安全裁剪上限，避免 prompt 过长
 
 ## 使用教程
 
@@ -49,7 +52,7 @@ python3 scripts/morning_brief.py --config examples/config.example.json --dry-run
 
 这一步主要检查：
 
-- 天气抓取是否成功
+- 天气抓取是否成功（脚本会把成功/失败来源写到 stderr）
 - RSS-AI 来源是否可用
 - 生成的口播稿是否符合你的风格
 
@@ -95,3 +98,4 @@ python3 scripts/morning_brief.py --config /path/to/config.json --dry-run > brief
 - 这份公开版已经把私有地名、私人称呼、工作区路径改成可配置项
 - 如果你不想让脚本读取 memory，直接不填 `assistant.workspace_dir` 即可
 - 发送前最好先 dry run 一次，避免 TTS 或 Telegram 参数填错
+- 脚本内置了天气接口瞬时错误重试、失败模型串行补抓，以及 prompt 安全裁剪；如果你接自己的数据源，建议保留这些保护

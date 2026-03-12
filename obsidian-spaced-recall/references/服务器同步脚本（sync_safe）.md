@@ -28,7 +28,7 @@ Headless Sync 使用锁目录防止并发同步：
 
 用法：
 ```bash
-bash <WORKSPACE>/skills/obsidian-spaced-recall/scripts/sync_safe.sh
+bash bash <WORKSPACE>/skills/obsidian-spaced-recall/scripts/sync_safe.sh
 ```
 
 ## 一次性配置（如未配置过）
