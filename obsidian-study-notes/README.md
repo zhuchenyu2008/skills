@@ -13,7 +13,7 @@
 
 - `SKILL.md`：给 agent 的核心执行规则
 - `assets/`：课堂笔记、错题、复盘、记忆卡片总表模板
-- `references/`：记忆卡片、同步、索引维护、外部 AI 总结流程等说明
+- `references/`：记忆卡片、同步、索引维护、语义去重 / 关联笔记 / 外部 AI 总结流程等说明
 - `scripts/create_note.py`：批量/可重复生成笔记用的小脚本
 - `scripts/sync_safe.sh`：安全执行 Obsidian Headless Sync 的脚本（已改成通过 `OBSIDIAN_VAULT_PATH` 配置）
 - `system-prompts/学习Claw.systemPrompt.md`：对应学习 topic / 小 Claw 的脱敏版提示词
@@ -24,6 +24,7 @@
 - `ob`（Obsidian Headless Sync CLI，如需自动同步）
 - 如果要处理音频：还需要配合 `sensevoice-local`
 - 如果要做记忆曲线：还需要配合 `obsidian-spaced-recall`
+- 如果要做语义去重 / 旧笔记关联 / backlinks：还需要配合 `obsidian_semantic.py` 这类本地语义索引脚本
 
 ## 快速上手
 
@@ -52,6 +53,7 @@ export OBSIDIAN_VAULT_PATH="/data/obsidian-vault"
 - 资料类：只归档到 `资料/`
 - 课堂类：归档原件，再生成/更新 `课堂笔记/`
 - 错题类：按一题一页写到 `错题/`
+- 写课堂/错题时：先做语义查重与旧笔记召回，再把高相关结果写进 `## 关联笔记`，让 Obsidian 自动形成 backlinks
 
 ## 示例
 

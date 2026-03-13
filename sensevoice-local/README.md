@@ -12,7 +12,8 @@
 
 - `SKILL.md`：agent 使用规则
 - `scripts/transcribe_file.sh`：转写包装脚本（通过 `SENSEVOICE_RUNTIME_DIR` 指向真正运行时）
-- `scripts/upload_audio_once.sh`：一次性上传页启动脚本
+- `scripts/upload_audio_once.sh`：一次性上传页启动脚本（前台/手动调试）
+- `scripts/start_upload_audio_once_detached.sh`：一次性上传页 detached 启动脚本（更适合 OpenClaw / agent exec）
 - `scripts/serve_upload_once.py`：上传服务实现
 - `references/upload-workflow.md`：上传 → 转写的详细流程
 - `references/troubleshooting.md`：常见问题
@@ -53,6 +54,14 @@ bash scripts/transcribe_file.sh --language zh /path/to/audio.mp3
 
 ### 2. 给用户开一次性上传页
 
+在 OpenClaw / agent exec 里，优先用 detached 包装脚本，避免会话结束后上传页被一起回收：
+
+```bash
+bash scripts/start_upload_audio_once_detached.sh   --port 18793   --state-file ./uploads/sensevoice-local/state.json
+```
+
+本地前台调试时，再用普通启动脚本：
+
 ```bash
 bash scripts/upload_audio_once.sh   --port 18793   --state-file ./uploads/sensevoice-local/state.json
 ```
@@ -60,7 +69,7 @@ bash scripts/upload_audio_once.sh   --port 18793   --state-file ./uploads/sensev
 如果用户要从公网访问，推荐显式指定：
 
 ```bash
-bash scripts/upload_audio_once.sh   --port 18793   --public-base http://your-public-host:18793   --state-file ./uploads/sensevoice-local/state.json
+bash scripts/start_upload_audio_once_detached.sh   --port 18793   --public-base http://your-public-host:18793   --state-file ./uploads/sensevoice-local/state.json
 ```
 
 ### 3. 上传成功后继续转写
@@ -75,7 +84,7 @@ bash scripts/transcribe_file.sh /path/to/uploaded-audio.mp3
 
 ### 示例 1：学习 topic 里有人说“我要上传大音频”
 
-1. 小 Claw 先调用 `upload_audio_once.sh`
+1. 小 Claw 先调用 `start_upload_audio_once_detached.sh`
 2. 把 `upload_url` 发给用户
 3. 用户上传 1 个文件后，页面自动关闭
 4. 读取返回路径，接着跑 `transcribe_file.sh`
@@ -101,3 +110,4 @@ python3 scripts/serve_upload_once.py --listen 127.0.0.1 --port 18793 --output-di
 - 这是本地 fallback，不是云端最强识别
 - 长音频建议先保证上传链路和磁盘空间稳定
 - 上传页默认就是单次使用，不要长期暴露
+- 如果你在 agent/CLI 会话里起上传页，优先用 detached 启动脚本；否则会话结束时链接可能一起失效

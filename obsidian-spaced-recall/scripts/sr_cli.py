@@ -11,7 +11,7 @@ Subcommands:
 
 Design goals:
 - stdlib only
-- store state inside vault: 复习/.openclaw/间隔复习/
+- store state inside vault: 学习/.openclaw/间隔复习/
 """
 
 from __future__ import annotations
@@ -114,6 +114,10 @@ def score_label(last_q: Optional[int]) -> str:
     return str(last_q) if last_q is not None else "未复习"
 
 
+def ease_label(ease: Optional[float]) -> str:
+    return f"{float(ease):.2f}" if ease is not None else "未复习"
+
+
 def file_paths_for_card_ids(con: sqlite3.Connection, card_ids: List[str]) -> List[str]:
     if not card_ids:
         return []
@@ -127,7 +131,7 @@ def file_paths_for_card_ids(con: sqlite3.Connection, card_ids: List[str]) -> Lis
 
 def refresh_status_sections(con: sqlite3.Connection, vault: Path, file_paths: Optional[List[str]] = None) -> int:
     sql = (
-        "SELECT c.file_path, c.line_no, c.prompt, s.last_q, s.last_review_ts, s.due_ts "
+        "SELECT c.file_path, c.line_no, c.prompt, s.last_q, s.ease, s.last_review_ts, s.due_ts "
         "FROM cards c JOIN schedule s ON s.card_id=c.card_id"
     )
     params: List[object] = []
@@ -138,12 +142,19 @@ def refresh_status_sections(con: sqlite3.Connection, vault: Path, file_paths: Op
     sql += " ORDER BY c.file_path ASC, c.line_no ASC, c.prompt ASC"
 
     rows = con.execute(sql, params).fetchall()
-    by_file: Dict[str, List[Tuple[int, str, Optional[int], Optional[int], Optional[int]]]] = {}
+    by_file: Dict[str, List[Tuple[int, str, Optional[int], Optional[float], Optional[int], Optional[int]]]] = {}
     if file_paths:
         by_file.update({str(fp): [] for fp in file_paths})
-    for file_path, line_no, prompt, last_q, last_review_ts, due_ts in rows:
+    for file_path, line_no, prompt, last_q, ease, last_review_ts, due_ts in rows:
         by_file.setdefault(str(file_path), []).append(
-            (int(line_no), str(prompt), None if last_q is None else int(last_q), last_review_ts, due_ts)
+            (
+                int(line_no),
+                str(prompt),
+                None if last_q is None else int(last_q),
+                None if ease is None else float(ease),
+                last_review_ts,
+                due_ts,
+            )
         )
 
     updated_files = 0
@@ -162,9 +173,10 @@ def refresh_status_sections(con: sqlite3.Connection, vault: Path, file_paths: Op
             new_text = (base + "\n") if base else ""
         else:
             lines = [AUTO_STATUS_BEGIN, "## 复习状态（自动生成）", "", "> 这一段由记忆曲线脚本自动回写，别手改。", ""]
-            for idx, (_line_no, prompt, last_q, last_review_ts, due_ts) in enumerate(items):
+            for idx, (_line_no, prompt, last_q, ease, last_review_ts, due_ts) in enumerate(items):
                 lines.append(f"> [!{callout_kind_for(last_q)}] {prompt}")
                 lines.append(f"> 上次评分：{score_label(last_q)}")
+                lines.append(f"> 熟练度：{ease_label(ease)}")
                 lines.append(f"> 上次复习：{fmt_ts_local(last_review_ts)}")
                 lines.append(f"> 下次复习：{fmt_ts_local(due_ts) if due_ts is not None else '未安排'}")
                 if idx != len(items) - 1:

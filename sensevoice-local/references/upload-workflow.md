@@ -8,7 +8,16 @@ Start a one-shot upload page, send the upload URL to the user, wait for exactly 
 
 ## Start the page
 
-Preferred wrapper:
+Preferred wrapper inside OpenClaw / agent exec:
+
+```bash
+bash <WORKSPACE>/skills/sensevoice-local/scripts/start_upload_audio_once_detached.sh \
+  --port 18793 \
+  --output-dir <WORKSPACE>/uploads/sensevoice-local \
+  --state-file <WORKSPACE>/uploads/sensevoice-local/state.json
+```
+
+Manual foreground debugging only:
 
 ```bash
 bash <WORKSPACE>/skills/sensevoice-local/scripts/upload_audio_once.sh \
@@ -19,14 +28,14 @@ bash <WORKSPACE>/skills/sensevoice-local/scripts/upload_audio_once.sh \
 
 If `--public-base` is omitted, the wrapper defaults to `http://<PUBLIC_IP_OR_HOST>:<port>`.
 
-The script prints one JSON line immediately with:
+The detached launcher waits for the state file and then prints the ready JSON with:
 
 - `status: ready`
 - `upload_url`
 - `port`
 - `output_dir`
 
-Send `upload_url` to the user right away.
+Before sending the link, verify the process is actually alive if there was any prior failure (for example `ss -ltnp | grep <port>` or a local GET request). Then send `upload_url` to the user right away.
 
 ## After upload
 
@@ -51,5 +60,6 @@ Then return the transcript or continue the study-note workflow.
 ## Notes
 
 - Use a one-shot page only; do not leave the upload port open after success.
+- In OpenClaw, avoid depending on the tool-managed exec background session to keep the upload page alive; if that session is terminated, the link dies immediately. Prefer the detached launcher.
 - Default behavior is to expose the link as `服务器 IP + 端口 + 随机路径`; override `--public-base` only when you explicitly need a different public入口。
 - Keep the skill-level instructions concise; this file holds the operational detail.
