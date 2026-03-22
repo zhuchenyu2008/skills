@@ -24,15 +24,15 @@ Skill 自带脚本：`scripts/sync_safe.sh`
 将脚本复制到常用位置并修改库路径：
 
 ```bash
-cp /path/to/skill/obsidian-study-notes/scripts/sync_safe.sh /root/obsidian/sync_safe.sh
-chmod +x /root/obsidian/sync_safe.sh
+cp /path/to/skill/obsidian-study-notes/scripts/sync_safe.sh /path/to/sync_safe.sh
+chmod +x /path/to/sync_safe.sh
 # 编辑脚本内 VAULT_PATH 为你的本地库路径
 ```
 
 ## 用法
 
 ```bash
-/root/obsidian/sync_safe.sh
+/path/to/sync_safe.sh
 ```
 
 ## 一次性配置

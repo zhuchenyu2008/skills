@@ -48,6 +48,20 @@ DEFAULT_MODELS = [
     "bom_access_global",
 ]
 
+TRANSIENT_HTTP_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+TRANSIENT_ERROR_SNIPPETS = (
+    'timed out',
+    'timeout',
+    'too many requests',
+    'temporarily unavailable',
+    'connection reset',
+    'connection aborted',
+    'unexpected eof',
+    'handshake',
+    'gateway time-out',
+    'gateway timeout',
+)
+
 WMO_DESC = {
     0: "晴",
     1: "基本晴",
@@ -86,21 +100,6 @@ def sh(args, *, timeout=180, check=True, capture=True, text=True):
     return p.stdout if text else p.stdout
 
 
-TRANSIENT_HTTP_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
-TRANSIENT_ERROR_SNIPPETS = (
-    'timed out',
-    'timeout',
-    'too many requests',
-    'temporarily unavailable',
-    'connection reset',
-    'connection aborted',
-    'unexpected eof',
-    'handshake',
-    'gateway time-out',
-    'gateway timeout',
-)
-
-
 def _is_transient_error(exc):
     if isinstance(exc, HTTPError):
         return exc.code in TRANSIENT_HTTP_STATUSES
@@ -111,7 +110,8 @@ def _is_transient_error(exc):
     return any(snippet in msg for snippet in TRANSIENT_ERROR_SNIPPETS)
 
 
-def http_json(url, *, timeout=30, method='GET', headers=None, data=None, retries=0, backoff=1.2):
+def http_json(url, *, timeout=30, method='GET', headers=None, data=None,
+              retries=0, backoff=1.2):
     h = {
         'User-Agent': 'openclaw-morning-brief/2.1',
         'Accept': 'application/json',
@@ -125,6 +125,7 @@ def http_json(url, *, timeout=30, method='GET', headers=None, data=None, retries
             h['Content-Type'] = 'application/json'
         elif isinstance(data, str):
             data = data.encode('utf-8')
+
     attempts = max(1, int(retries) + 1)
     last_exc = None
     for attempt in range(1, attempts + 1):
@@ -648,6 +649,12 @@ def telegram_send_voice(token: str, chat_id: int, thread_id: int, ogg_path: str,
     return resp
 
 
+def daily_session_id(prefix: str):
+    day = now_in_tz('Asia/Shanghai').strftime('%Y%m%d')
+    return f"{prefix}-{day}"
+
+
+
 def build_greeting(cfg):
     assistant_cfg = cfg.get('assistant') or {}
     tz_name = ((cfg.get('location') or {}).get('timezone')) or assistant_cfg.get('timezone') or 'Asia/Shanghai'
@@ -675,9 +682,9 @@ def build_greeting(cfg):
 
     user_name = (assistant_cfg.get('user_name') or '').strip()
     addressing = (
-        f'- 如需称呼，只自然称呼一次“{user_name}”，不要句首直呼。'
+        f'- 如果要称呼，只自然称呼一次“{user_name}”，不要句首直呼，也不要以“{user_name}，”开头。'
         if user_name else
-        '- 如需称呼，只自然称呼一次，不要句首直呼。'
+        '- 如果要称呼，只自然称呼一次，不要句首直呼。'
     )
 
     greet_prompt = f"""请生成一段早安问候，要求：
@@ -699,7 +706,7 @@ def build_greeting(cfg):
 
     gr_raw = sh([
         'openclaw', 'agent', '--agent', assistant_cfg.get('agent_id', 'morning'),
-        '--session-id', assistant_cfg.get('greeting_session_id', 'morning-greeting'),
+        '--session-id', daily_session_id(assistant_cfg.get('greeting_session_id_prefix', 'morning-greeting')),
         '--message', greet_prompt, '--json', '--timeout', '180'
     ], timeout=220)
     gr_j = json.loads(gr_raw)
@@ -726,7 +733,8 @@ def draft_brief(weather_consensus, rss_body, cfg):
         if user_name else
         '开头可自然称呼一次用户，后续不再反复称呼。'
     )
-    prompt = f"""你是早报口播助手。请把下面两段材料整理成适合TTS的中文口播稿。
+    source_target = weather_consensus.get('source_count_target') or len(DEFAULT_MODELS)
+    prompt = f"""你是早报Claw。请把下面两段材料整理成适合TTS的中文口播稿。
 
 口播风格（必须遵守，央视《新闻联播》/央广新闻口吻）：
 - {salutation_rule}
@@ -735,10 +743,10 @@ def draft_brief(weather_consensus, rss_body, cfg):
 - 允许使用正式承接词：例如“据汇总信息显示”“综合来看”“同时”“此外”。
 
 内容要求：
-1) 天气部分：下面给你的不是单一来源，而是“{location_name} 多个预报源/模型交叉比对后的共识结果”。
+1) 天气部分：下面给你的不是单一来源，而是“{location_name} {source_target} 个预报源/模型交叉比对后的共识结果”。
    - 必须明确按“交叉比对后的结论”来讲，不要假装来自单一来源。
    - 必须覆盖：整体天气、温度范围、体感与湿度、降水、风、通勤建议。
-   - 如果存在明显分歧，要用一句话点出，例如“多个来源里有多数认为傍晚有零星雨风险”。
+   - 如果存在明显分歧，要用一句话点出，例如“多个来源里多数认为傍晚有零星雨风险”。
    - 时段变化只挑关键时段来讲（早间、午间、傍晚、夜间），不要为凑数硬念表。
 2) 日报部分：尽量不要改写事实与措辞，主要做口播化结构整理（合并重复、按重要性排序、去掉冗余），不做主观点评。
 3) 结尾追加一句固定收尾："以上为今日早报。"
@@ -748,12 +756,18 @@ def draft_brief(weather_consensus, rss_body, cfg):
 {weather_json}
 
 RSS-AI 日报原文：
-{rss_body.strip()}
+{rss_body_prompt}
 """
+    if weather_truncated or rss_truncated:
+        prompt += "\n\n补充说明（仅供你内部参考，不要在最终口播里说出来）："
+        if weather_truncated:
+            prompt += "\n- 天气 JSON 过长，已为本次生成截断到安全长度；请优先保留其中关键数值与结论。"
+        if rss_truncated:
+            prompt += "\n- RSS 日报原文过长，已为本次生成截断到安全长度；请优先保留已提供部分中的事实与数字。"
 
     raw = sh([
         'openclaw', 'agent', '--agent', assistant_cfg.get('agent_id', 'morning'),
-        '--session-id', assistant_cfg.get('brief_session_id', 'morning-brief'),
+        '--session-id', daily_session_id(assistant_cfg.get('brief_session_id_prefix', 'morning-brief')),
         '--message', prompt, '--json', '--timeout', '900'
     ], timeout=950)
     jr = json.loads(raw)

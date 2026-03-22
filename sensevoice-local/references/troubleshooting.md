@@ -6,11 +6,20 @@
 When launched from an OpenClaw exec-managed session, the foreground upload server can receive `SIGTERM` when the session ends or is reclaimed. Start it with `scripts/start_upload_audio_once_detached.sh` instead, then confirm readiness from the state JSON (and optionally `ss -ltnp | grep <port>`).
 
 
+### Upload URL returns `not found` even though state says `ready`
+The most common cause is a stale upload process still owning the requested port. A fresh state file can contain a new token while the old process is the one actually responding, so every request to the new `upload_url` returns 404.
+
+Fix it in this order:
+1. Kill the old listener on that exact port.
+2. Restart the upload page on the same requested port.
+3. Send a real HTTP GET to the exact `upload_url`.
+4. Only share the link after you confirm `200 OK` and the upload-form HTML.
+
 ### `Missing required command: docker`
 The host does not have Docker in PATH. This skill assumes Docker is available.
 
 ### `Repository not found`
-Expected runtime path is the directory pointed to by `SENSEVOICE_RUNTIME_DIR` (default: `/opt/sensevoice-local`).
+Expected runtime path is `<WORKSPACE>/sensevoice-local`.
 
 ### Model files missing
 Run the wrapper once; it auto-downloads the pre-exported model through `scripts/prepare_model.sh`.

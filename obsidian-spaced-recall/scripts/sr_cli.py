@@ -772,6 +772,107 @@ def _save_hold(vault: Path, hold: dict) -> None:
     hold_path(vault).write_text(json.dumps(hold, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _remove_card_line_from_source(vault: Path, rel_path: str, raw: str, line_no: Optional[int] = None) -> Tuple[bool, Optional[int]]:
+    src = (vault / rel_path).resolve()
+    if not src.exists():
+        return False, None
+
+    lines = src.read_text(encoding="utf-8").splitlines(True)
+    target_idx: Optional[int] = None
+
+    if line_no and 1 <= int(line_no) <= len(lines):
+        s = lines[int(line_no) - 1].rstrip("\n")
+        if LIST_ITEM_RE.match(s):
+            item = LIST_ITEM_RE.sub("", s).strip()
+            if item == raw:
+                target_idx = int(line_no) - 1
+
+    if target_idx is None:
+        for i, line in enumerate(lines):
+            s = line.rstrip("\n")
+            if not LIST_ITEM_RE.match(s):
+                continue
+            item = LIST_ITEM_RE.sub("", s).strip()
+            if item == raw:
+                target_idx = i
+                break
+
+    if target_idx is None:
+        return False, None
+
+    del lines[target_idx]
+    src.write_text("".join(lines), encoding="utf-8")
+    return True, target_idx + 1
+
+
+def _remove_card_from_pending(vault: Path, card_id: str) -> dict:
+    pending = _load_pending(vault)
+    result = {
+        "removed_from_pending": False,
+        "pending_updated": False,
+        "pending_cleared": False,
+        "remaining": 0,
+        "cursor": 0,
+        "next_prompt": None,
+    }
+    if pending is None:
+        return result
+
+    items = _pending_items(pending)
+    cursor = int(pending.get("cursor", 0) or 0)
+    removed_index: Optional[int] = None
+    kept: List[dict] = []
+
+    for idx, it in enumerate(items):
+        if removed_index is None and str(it.get("card_id")) == str(card_id):
+            removed_index = idx
+            continue
+        kept.append(dict(it))
+
+    if removed_index is None:
+        return result
+
+    result["removed_from_pending"] = True
+
+    for idx, it in enumerate(kept):
+        it["n"] = idx + 1
+
+    if removed_index < cursor:
+        cursor -= 1
+    if cursor < 0:
+        cursor = 0
+
+    pending["items"] = kept
+    pending["cursor"] = cursor
+
+    hp = hold_path(vault)
+    if hp.exists():
+        try:
+            hold = json.loads(hp.read_text(encoding="utf-8"))
+        except Exception:
+            hold = None
+        if hold and str(hold.get("card_id")) == str(card_id):
+            try:
+                hp.unlink()
+            except Exception:
+                pass
+
+    if not kept or cursor >= len(kept):
+        try:
+            pending_path(vault).unlink()
+            result["pending_cleared"] = True
+        except Exception:
+            pass
+    else:
+        _save_pending(vault, pending)
+        result["pending_updated"] = True
+        result["remaining"] = len(kept)
+        result["cursor"] = cursor
+        result["next_prompt"] = kept[cursor].get("prompt") or ""
+
+    return result
+
+
 def cmd_hold(args) -> int:
     """Hold a grading decision for the current question.
 
@@ -1021,6 +1122,74 @@ def cmd_clear(args) -> int:
         print(f"已停止复习：清理 {', '.join(removed)}。")
     else:
         print("没有正在进行的复习。")
+    return 0
+
+
+def cmd_delete_current(args) -> int:
+    """Permanently delete the current pending card from source file + DB, then continue review."""
+    vault = vault_path_from_args(args)
+    con = connect_db(vault)
+
+    pending = _load_pending(vault)
+    if pending is None:
+        print("没有 pending：请先 next/quiz 出题。")
+        return 2
+
+    items = _pending_items(pending)
+    cursor = int(pending.get("cursor", 0) or 0)
+    if cursor >= len(items):
+        try:
+            pending_path(vault).unlink()
+        except Exception:
+            pass
+        try:
+            hold_path(vault).unlink()
+        except Exception:
+            pass
+        print("本轮复习已完成。")
+        return 0
+
+    it = items[cursor]
+    card_id = str(it["card_id"])
+    row = con.execute(
+        "SELECT file_path, line_no, raw, prompt FROM cards WHERE card_id=?",
+        (card_id,),
+    ).fetchone()
+    if row is None:
+        print("当前题不在题库中：请先 scan 入库。")
+        return 2
+
+    rel_path, line_no, raw, prompt = str(row[0]), int(row[1]), str(row[2]), str(row[3])
+    source_deleted, removed_line_no = _remove_card_line_from_source(vault, rel_path, raw, line_no)
+    if not source_deleted:
+        print("删除失败：没有在源卡片文件里定位到这道题，未执行数据库删除。")
+        return 2
+
+    con.execute("DELETE FROM schedule WHERE card_id=?", (card_id,))
+    con.execute("DELETE FROM cards WHERE card_id=?", (card_id,))
+    con.commit()
+
+    status_files_updated = refresh_status_sections(con, vault, file_paths=[rel_path])
+    pending_result = _remove_card_from_pending(vault, card_id)
+    due_count = con.execute("SELECT COUNT(*) FROM schedule WHERE due_ts <= ?", (now_ts(),)).fetchone()[0]
+
+    print(json.dumps({
+        "deleted": True,
+        "card_id": card_id,
+        "prompt": prompt,
+        "source": {
+            "file_path": rel_path,
+            "line_no": removed_line_no,
+        },
+        "removed_from_pending": pending_result["removed_from_pending"],
+        "pending_updated": pending_result["pending_updated"],
+        "pending_cleared": pending_result["pending_cleared"],
+        "remaining": pending_result["remaining"],
+        "cursor": pending_result["cursor"],
+        "next_prompt": pending_result["next_prompt"],
+        "due_now": int(due_count),
+        "status_files_updated": status_files_updated,
+    }, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1313,6 +1482,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s2f = sub.add_parser("clear", help="clear pending quiz (stop review)")
     s2f.set_defaults(func=cmd_clear)
+
+    s2g = sub.add_parser("delete-current", help="permanently delete the current pending card from source + schedule")
+    s2g.set_defaults(func=cmd_delete_current)
 
     s3 = sub.add_parser("pending", help="export pending quiz (optionally with answers)")
     s3.add_argument("--with-answers", action="store_true")

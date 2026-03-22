@@ -8,13 +8,14 @@ listen="0.0.0.0"
 port="18793"
 public_base=""
 default_public_host="${PUBLIC_UPLOAD_HOST:-127.0.0.1}"
-output_dir="${SENSEVOICE_UPLOAD_DIR:-./uploads/sensevoice-local}"
+workspace_dir="${OPENCLAW_WORKSPACE:-/opt/openclaw/workspace}"
+output_dir="${SENSEVOICE_UPLOAD_DIR:-$workspace_dir/uploads/sensevoice-local}"
 timeout="1800"
 max_bytes="0"
 state_file=""
 title="上传课堂录音"
-description="把大音频文件传到这里。上传成功后，这个临时入口会自动关闭。"
-footer="支持 mp3、m4a、wav、aac、opus、ogg、flac。上传完成后继续走本地转写流程。"
+description="把大音频文件传到这里。可一次选择多个文件一起上传；提交成功后，这个临时入口会自动关闭。"
+footer="支持 mp3、m4a、wav、aac、opus、ogg、flac。可一次选择多个文件；上传完成后继续走本地转写流程。"
 
 usage() {
   cat <<'USAGE'
@@ -52,6 +53,7 @@ args=(
   --title "$title"
   --description "$description"
   --footer "$footer"
+  --allow-multiple
 )
 
 if [[ -n "$public_base" ]]; then
