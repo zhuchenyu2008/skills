@@ -35,7 +35,7 @@ The detached launcher waits for the state file and then prints the ready JSON wi
 - `port`
 - `output_dir`
 
-Before sending the link, verify the process is actually alive if there was any prior failure (for example `ss -ltnp | grep <port>` or a local GET request). Then send `upload_url` to the user right away.
+Before sending the link, do not trust the ready state alone and do not rely only on `ss -ltnp | grep <port>`. Verify the exact final `upload_url` with a real HTTP GET. Only send the link if the request returns `200 OK` and the response body is the upload-form HTML rather than `not found` or another stale response. If verification fails, clear any old listener on that same port, restart on the same requested port, and verify the exact `upload_url` again before replying.
 
 ## After upload
 
