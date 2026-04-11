@@ -1,0 +1,50 @@
+{
+  "telegram": {
+    "bot_token": "8303839456:AAG2oVuarSo4ODSWbDCT3kq4SdFNq3JmJs4",
+    "chat_id": -1003720752566,
+    "message_thread_id": 3
+  },
+  "location": {
+    "name": "宁波市海曙区",
+    "latitude": 29.87819,
+    "longitude": 121.54945,
+    "timezone": "Asia/Shanghai"
+  },
+  "sources": {
+    "rssai_base_url": "http://127.0.0.1:3601"
+  },
+  "weather": {
+    "models": [
+      "ecmwf_ifs025",
+      "ecmwf_aifs025_single",
+      "gfs_seamless",
+      "gfs_graphcast025",
+      "icon_seamless",
+      "gem_seamless",
+      "jma_seamless",
+      "ukmo_seamless",
+      "kma_seamless",
+      "bom_access_global"
+    ],
+    "parallel_workers": 3,
+    "request_retries": 2,
+    "request_backoff_seconds": 1.2,
+    "retry_failed_serially": true
+  },
+  "tts": {
+    "provider": "mmx",
+    "voice": "male-qn-jingying",
+    "chunk_chars": 9000
+  },
+  "limits": {
+    "max_chars": 20000
+  },
+  "bgm": {
+    "prompts": [
+      "一个起床闹钟音乐，以舒缓温柔钢琴开头，活力昂扬结尾。",
+      "一个起床闹钟音乐，充满活力，充满希望。"
+    ],
+    "volume": 0.25,
+    "fade_out_seconds": 5
+  }
+}
