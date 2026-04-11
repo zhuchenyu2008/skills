@@ -639,33 +639,30 @@ def mmx_generate_bgm(prompt: str, out_mp3: str, timeout=180):
 
 
 def mix_voice_with_bgm(voice_mp3: str, bgm_files: list, volume: float, fade_out_sec: float, out_ogg: str, timeout=120):
-    """Mix voice mp3 with one or more background music tracks; output to ogg."""
+    """Mix voice mp3 with one background music track (looped, sidechain ducked); output to ogg."""
     if not bgm_files:
         wav_to_ogg_opus(voice_mp3, out_ogg)
         return
 
-    n_bgm = len(bgm_files)
-
-    # Get voice duration so we can compute absolute fade-out start time
+    # Get voice duration so we can loop BGM to fill it exactly
     voice_dur = float(sh(['ffprobe', '-v', 'error', '-show_entries',
                            'format=duration', '-of', 'csv=p=0', voice_mp3]))
     fade_start = max(0, voice_dur - fade_out_sec)
+    dur_str = f'{voice_dur:.3f}'
 
-    # Build filter_complex: each input gets volume, then amix, then fade-out
-    parts = [f'[0:a]volume=1.0[v0]']
-    for i in range(n_bgm):
-        parts.append(f'[{i+1}:a]volume={volume}[v{i+1}]')
-    mix_inputs = ''.join([f'[v{i}]' for i in range(n_bgm + 1)])
+    # Simple mix with aloop: no sidechain, just direct volume reduction.
+    # Music mean=-13.2 dB vs voice mean=-22.8 dB → music is ~9.6 dB louder.
+    # For ~15 dB below voice, volume ≈ 0.03 (music mean becomes ≈ -30 dB).
     filter_complex = (
-        ';'.join(parts)
-        + ';' + mix_inputs + f'amix=inputs={n_bgm+1}:duration=first:normalize=0[pre]'
-        + f';[pre]afade=t=out:st={fade_start:.3f}:d={fade_out_sec}[out]'
+        f'[0:a]volume=1.0[voice];'
+        f'[1:a]aloop=loop=-1:size=0,atrim=0:duration={dur_str},volume={volume}[bgm];'
+        f'[voice][bgm]amix=inputs=2:duration=first:normalize=0[pre];'
+        f'[pre]afade=t=out:st={fade_start:.3f}:d={fade_out_sec}[out]'
     )
 
-    cmd = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', voice_mp3]
-    for bgm in bgm_files:
-        cmd += ['-i', bgm]
-    cmd += [
+    cmd = [
+        'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+        '-i', voice_mp3, '-i', bgm_files[0],
         '-filter_complex', filter_complex,
         '-map', '[out]',
         '-c:a', 'libopus', '-b:a', '32k', '-vbr', 'on',
@@ -963,26 +960,22 @@ def main():
 
         # Background music generation + mixing
         bgm_cfg = cfg.get('bgm', {})
-        bgm_prompts = bgm_cfg.get('prompts', [])
-        bgm_volume = float(bgm_cfg.get('volume', 0.25))
+        bgm_prompt = bgm_cfg.get('prompt', '').strip()
+        bgm_volume = float(bgm_cfg.get('volume', 0.15))
         bgm_fade_out = float(bgm_cfg.get('fade_out_seconds', 5))
 
         bgm_files = []
-        if bgm_prompts:
-            for i, prompt in enumerate(bgm_prompts):
-                bgm_path = os.path.join(td, f'bgm_{i:03d}.mp3')
-                try:
-                    mmx_generate_bgm(prompt, bgm_path, timeout=180)
-                    bgm_files.append(bgm_path)
-                    print(f'[bgm] track {i+1}/{len(bgm_prompts)} generated: {bgm_path}', file=sys.stderr)
-                except Exception as e:
-                    print(f'[bgm] track {i+1}/{len(bgm_prompts)} failed: {e}; proceeding without bgm', file=sys.stderr)
-                    break
-                if i < len(bgm_prompts) - 1:
-                    time.sleep(3)
+        if bgm_prompt:
+            bgm_path = os.path.join(td, 'bgm_001.mp3')
+            try:
+                mmx_generate_bgm(bgm_prompt, bgm_path, timeout=180)
+                bgm_files.append(bgm_path)
+                print(f'[bgm] generated: {bgm_path}', file=sys.stderr)
+            except Exception as e:
+                print(f'[bgm] failed: {e}; proceeding without bgm', file=sys.stderr)
 
         if bgm_files:
-            print(f'[bgm] mixing {len(bgm_files)} track(s) with voice...', file=sys.stderr)
+            print(f'[bgm] mixing with voice...', file=sys.stderr)
             mix_voice_with_bgm(voice_mp3, bgm_files, bgm_volume, bgm_fade_out, ogg, timeout=120)
         else:
             print('[bgm] no bgm available, using voice-only', file=sys.stderr)
