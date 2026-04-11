@@ -620,22 +620,15 @@ def wav_to_ogg_opus(in_wav: str, out_ogg: str):
 
 def mmx_generate_bgm(prompt: str, out_mp3: str, timeout=180):
     """Generate one background music track using mmx-cli music generate."""
-    txt_file = out_mp3 + '.txt'
-    with open(txt_file, 'w', encoding='utf-8') as f:
-        f.write(prompt)
-    try:
-        p = subprocess.run(
-            ['npx', 'mmx-cli', 'music', 'generate',
-             '--text-file', txt_file,
-             '--lyrics-optimizer',
-             '--out', out_mp3, '--quiet'],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        if p.returncode != 0:
-            raise RuntimeError(f"mmx music generate failed: {p.stderr.strip()}")
-    finally:
-        if os.path.exists(txt_file):
-            os.remove(txt_file)
+    p = subprocess.run(
+        ['npx', 'mmx-cli', 'music', 'generate',
+         '--prompt', prompt,
+         '--lyrics-optimizer',
+         '--out', out_mp3, '--quiet'],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    if p.returncode != 0:
+        raise RuntimeError(f"mmx music generate failed: {p.stderr.strip()}")
 
 
 def mix_voice_with_bgm(voice_mp3: str, bgm_files: list, volume: float, fade_out_sec: float, out_ogg: str, timeout=120):
