@@ -639,23 +639,18 @@ def mmx_generate_bgm(prompt: str, out_mp3: str, timeout=180):
 
 
 def mix_voice_with_bgm(voice_mp3: str, bgm_files: list, volume: float, fade_out_sec: float, out_ogg: str, timeout=120):
-    """Mix voice mp3 with one background music track (looped, sidechain ducked); output to ogg."""
+    """Mix voice with pre-trimmed BGM; output to ogg."""
     if not bgm_files:
         wav_to_ogg_opus(voice_mp3, out_ogg)
         return
 
-    # Get voice duration so we can loop BGM to fill it exactly
     voice_dur = float(sh(['ffprobe', '-v', 'error', '-show_entries',
                            'format=duration', '-of', 'csv=p=0', voice_mp3]))
     fade_start = max(0, voice_dur - fade_out_sec)
-    dur_str = f'{voice_dur:.3f}'
 
-    # Simple mix with aloop: no sidechain, just direct volume reduction.
-    # Music mean=-13.2 dB vs voice mean=-22.8 dB → music is ~9.6 dB louder.
-    # For ~15 dB below voice, volume ≈ 0.03 (music mean becomes ≈ -30 dB).
     filter_complex = (
         f'[0:a]volume=1.0[voice];'
-        f'[1:a]aloop=loop=-1:size=0,atrim=0:duration={dur_str},volume={volume}[bgm];'
+        f'[1:a]volume={volume}[bgm];'
         f'[voice][bgm]amix=inputs=2:duration=first:normalize=0[pre];'
         f'[pre]afade=t=out:st={fade_start:.3f}:d={fade_out_sec}[out]'
     )
@@ -959,26 +954,61 @@ def main():
             sh(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', lst, '-c', 'copy', voice_mp3], timeout=180)
 
         # Background music generation + mixing
+        # Strategy: generate enough music tracks to cover voice duration (no looping).
+        # Generate tracks sequentially until total duration >= voice duration.
         bgm_cfg = cfg.get('bgm', {})
-        bgm_prompt = bgm_cfg.get('prompt', '').strip()
-        bgm_volume = float(bgm_cfg.get('volume', 0.15))
+        bgm_prompts = bgm_cfg.get('prompts', [])
+        bgm_volume = float(bgm_cfg.get('volume', 0.08))
         bgm_fade_out = float(bgm_cfg.get('fade_out_seconds', 5))
 
-        bgm_files = []
-        if bgm_prompt:
-            bgm_path = os.path.join(td, 'bgm_001.mp3')
-            try:
-                mmx_generate_bgm(bgm_prompt, bgm_path, timeout=180)
-                bgm_files.append(bgm_path)
-                print(f'[bgm] generated: {bgm_path}', file=sys.stderr)
-            except Exception as e:
-                print(f'[bgm] failed: {e}; proceeding without bgm', file=sys.stderr)
+        voice_dur = float(sh(['ffprobe', '-v', 'error', '-show_entries',
+                              'format=duration', '-of', 'csv=p=0', voice_mp3]))
 
-        if bgm_files:
-            print(f'[bgm] mixing with voice...', file=sys.stderr)
-            mix_voice_with_bgm(voice_mp3, bgm_files, bgm_volume, bgm_fade_out, ogg, timeout=120)
+        bgm_concat_list = os.path.join(td, 'bgm_concat.txt')
+        bgm_total_dur = 0.0
+        max_bgm_tracks = 4   # safety cap
+
+        if bgm_prompts:
+            with open(bgm_concat_list, 'w', encoding='utf-8') as f:
+                for i in range(max_bgm_tracks):
+                    prompt = bgm_prompts[i % len(bgm_prompts)]   # cycle through prompts
+                    bgm_path = os.path.join(td, f'bgm_{i:03d}.mp3')
+                    try:
+                        mmx_generate_bgm(prompt, bgm_path, timeout=180)
+                        track_dur = float(sh(['ffprobe', '-v', 'error', '-show_entries',
+                                              'format=duration', '-of', 'csv=p=0', bgm_path]))
+                        f.write(f"file '{bgm_path}'\n")
+                        bgm_total_dur += track_dur
+                        print(f'[bgm] track {i+1}: {track_dur:.1f}s (total: {bgm_total_dur:.1f}s)', file=sys.stderr)
+                        if bgm_total_dur >= voice_dur:
+                            break
+                        if i < max_bgm_tracks - 1:
+                            time.sleep(3)   # space out generation calls
+                    except Exception as e:
+                        print(f'[bgm] track {i+1} failed: {e}', file=sys.stderr)
+                        break
+
+            bgm_joined = os.path.join(td, 'bgm_joined.mp3')
+            if bgm_total_dur > 0:
+                sh(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+                    '-f', 'concat', '-safe', '0', '-i', bgm_concat_list,
+                    '-c', 'copy', bgm_joined], timeout=180)
+
+            bgm_final = os.path.join(td, 'bgm_final.mp3')
+            # Trim/extend to exact voice duration
+            sh(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+                '-i', bgm_joined,
+                '-af', f'apad=whole_dur={voice_dur:.3f},atrim=0:duration={voice_dur:.3f}',
+                '-c:a', 'libmp3lame', '-b:a', '192k',
+                bgm_final], timeout=180)
+
+            if os.path.exists(bgm_final):
+                print(f'[bgm] mixing with voice ({voice_dur:.1f}s)...', file=sys.stderr)
+                mix_voice_with_bgm(voice_mp3, [bgm_final], bgm_volume, bgm_fade_out, ogg, timeout=120)
+            else:
+                print('[bgm] failed, using voice-only', file=sys.stderr)
+                wav_to_ogg_opus(voice_mp3, ogg)
         else:
-            print('[bgm] no bgm available, using voice-only', file=sys.stderr)
             wav_to_ogg_opus(voice_mp3, ogg)
 
         divider = "——————————————"
