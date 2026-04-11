@@ -960,6 +960,7 @@ def main():
         bgm_concat_list = os.path.join(td, 'bgm_concat.txt')
         bgm_total_dur = 0.0
         max_bgm_tracks = 4   # safety cap
+        bgm_tracks = []   # keep individual track paths for separate posting
 
         if bgm_prompts:
             with open(bgm_concat_list, 'w', encoding='utf-8') as f:
@@ -972,6 +973,8 @@ def main():
                                               'format=duration', '-of', 'csv=p=0', bgm_path]))
                         f.write(f"file '{bgm_path}'\n")
                         bgm_total_dur += track_dur
+                        if i < 2:
+                            bgm_tracks.append((prompt, bgm_path))   # keep first 2 for posting
                         print(f'[bgm] track {i+1}: {track_dur:.1f}s (total: {bgm_total_dur:.1f}s)', file=sys.stderr)
                         if bgm_total_dur >= voice_dur:
                             break
@@ -1013,6 +1016,17 @@ def main():
             tg['bot_token'], int(tg['chat_id']), int(tg['message_thread_id']),
             ogg, caption=caption
         )
+
+        # Post individual BGM tracks after the main voice
+        for idx, (prompt, bgm_path) in enumerate(bgm_tracks):
+            if os.path.exists(bgm_path):
+                # Convert mp3 to ogg for sending
+                bgm_ogg = os.path.join(td, f'bgm_{idx:03d}.ogg')
+                wav_to_ogg_opus(bgm_path, bgm_ogg)
+                telegram_send_voice(
+                    tg['bot_token'], int(tg['chat_id']), int(tg['message_thread_id']),
+                    bgm_ogg, caption=f"BGM {idx+1}"
+                )
 
     print('OK')
 
